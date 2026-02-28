@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# 大文件 - 不上传
+*.db
+*.zip
+*.pth
+*.pt
+*.ckpt
+*.pkl
+*.h5
+*.model
+*.csv
+*.json
+*.txt
+
+# 模型文件
+model/
+ncf_model.pth
+
+# 字体文件
+*.otf
+*.ttf
+
+# 临时文件
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# 文档
+*.docx
+
+# Streamlit
+.streamlit/
+
+# 用户数据
+user_history.json
+users.json
+
+# 其他临时文件夹
+music-recommendation-system-Pro/
