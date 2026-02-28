@@ -2,7 +2,7 @@
 
 本项目实现了基于内容推荐、协同过滤（UserCF、ItemCF、SVD）和深度学习（NCF）的音乐推荐系统，配有Streamlit前端可视化界面。
 
-## 📁 目录结构123321
+## 目录结构
 
 ```
 项目根目录/
@@ -33,7 +33,7 @@
 └── README.md
 ```
 
-## ✨ 主要功能
+##  主要功能
 
 - **内容冷启动推荐**：为新用户推荐全局最热门的歌曲
 - **协同过滤推荐**：支持UserCF、ItemCF、SVD三种算法
@@ -42,7 +42,7 @@
 - **用户历史管理**：支持勾选保存、实时更新历史记录
 - **数据可视化**：词云图展示最受欢迎的歌手和歌曲
 
-## 🚀 使用方法
+##  使用方法
 
 ### 1. 安装依赖
 
@@ -77,7 +77,7 @@ streamlit run app/main.py
 
 浏览器访问：http://localhost:8501
 
-## 📋 主要依赖
+##  主要依赖
 
 - Python 3.7+
 - Streamlit >= 1.28.0
@@ -90,7 +90,7 @@ streamlit run app/main.py
 - surprise >= 0.1
 - requests >= 2.28.0
 
-## 🔧 配置说明
+##  配置说明
 
 所有配置都在 `config.py` 文件中，包括：
 - 数据文件路径
@@ -99,7 +99,7 @@ streamlit run app/main.py
 - 推荐数量范围
 - 用户历史记录大小等
 
-## 📊 数据集
+##  数据集
 
 - **track_metadata.db**：包含歌曲元数据（歌手、歌名、年份、熟悉度、热度等）
 - **train_triplets.txt**：包含用户-歌曲-播放量三元组
@@ -108,7 +108,7 @@ streamlit run app/main.py
 - 百度网盘：[点击下载](https://pan.baidu.com/s/1V1_Uvcx9Tj06feR7NnFqwg#list/path=%2F)  
 - 提取码：rlnj
 
-## 🎯 功能特点
+##  功能特点
 
 1. **多算法融合**：集成4种推荐算法，适应不同场景
 2. **用户体验优化**：历史记录管理、实时更新、加载提示
@@ -116,7 +116,7 @@ streamlit run app/main.py
 4. **代码结构清晰**：模块化设计，易于维护和扩展
 5. **错误处理完善**：友好的错误提示和异常处理
 
-## 📝 开发说明
+##  开发说明
 
 ### 代码组织
 
@@ -131,10 +131,10 @@ streamlit run app/main.py
 2. 新算法：在 `src/` 目录下添加算法实现
 3. 新工具函数：在 `app/utils/helpers.py` 中添加
 
-## 🤝 贡献
+##  贡献
 
 欢迎提交issue和pull request
 
-## 📄 License
+##  License
 
 仅供学习交流，禁止商用
