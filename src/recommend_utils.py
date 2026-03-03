@@ -5,9 +5,8 @@ import torch
 import torch.nn as nn
 import streamlit as st
 from surprise import Dataset, Reader, KNNBasic, SVD as SurpriseSVD
-from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.feature_extraction import FeatureHasher
-from sklearn.metrics.pairwise import cosine_similarity
 from surprise.model_selection import train_test_split
 import sys
 import os
@@ -20,113 +19,174 @@ if BASE_DIR not in sys.path:
 from config import DATA_FILE, NCF_MODEL_PATH, CF_SAMPLE_SIZE, NCF_SAMPLE_SIZE
 from src.deep_learning_recommend import NCF
 
-# 内容推荐冷启动
+# 多维度榜单推荐（冷启动）
 @st.cache_data
 def _get_cold_start_data():
-    # 缓存冷启动数据
+    # 缓存歌曲统计数据（包含多个维度）
     df = pd.read_csv(DATA_FILE)
-    # 统计每首歌的总播放量并排序
-    song_stats = df.groupby(['song', 'artist_name', 'title'])['play_count'].sum().reset_index()
-    song_stats = song_stats.sort_values('play_count', ascending=False)
+    # 统计每首歌的总播放量，并保留其他特征
+    song_stats = df.groupby(['song', 'artist_name', 'title', 'year', 'artist_hotttnesss', 'artist_familiarity'])['play_count'].sum().reset_index()
     return song_stats
 
-def content_cold_start(topk=10):
-    # 内容冷启动推荐
+def popularity_cold_start(topk=10, chart_type='popularity', diversity=True, seed=None):
+    """
+    多维度榜单推荐（冷启动）
+    
+    Args:
+        topk: 推荐数量
+        chart_type: 榜单类型
+            - 'popularity': 热门度榜单（按总播放量）
+            - 'artist': 歌手榜单（按歌手热度）
+        diversity: 是否使用多样性推荐（从Top歌曲中随机采样）
+        seed: 随机种子，用于控制随机性
+    """
     song_stats = _get_cold_start_data()
-    top_songs = song_stats.head(topk)
-    result = [
-        f"{row['artist_name']} - {row['title']} (song_id={row['song']})，总播放量：{row['play_count']:.2f}"
-        for _, row in top_songs.iterrows()
-    ]
+    
+    # 根据榜单类型排序
+    if chart_type == 'popularity':
+        # 热门度榜单：按总播放量排序
+        sorted_stats = song_stats.sort_values('play_count', ascending=False)
+    elif chart_type == 'artist':
+        # 歌手榜单：按歌手热度排序
+        sorted_stats = song_stats.sort_values('artist_hotttnesss', ascending=False)
+    else:
+        # 默认热门度榜单
+        sorted_stats = song_stats.sort_values('play_count', ascending=False)
+    
+    if diversity:
+        # 多样性推荐：从Top歌曲中随机采样
+        # 从Top 100歌曲中随机选择，保证质量和多样性
+        top_n = min(100, len(sorted_stats))
+        top_songs_pool = sorted_stats.head(top_n)
+        
+        # 使用随机种子确保可复现，但每次刷新可以不同
+        if seed is None:
+            import random
+            seed = random.randint(0, 1000000)
+        
+        np.random.seed(seed)
+        # 随机采样，不重复
+        if len(top_songs_pool) >= topk:
+            sampled_indices = np.random.choice(len(top_songs_pool), size=topk, replace=False)
+            top_songs = top_songs_pool.iloc[sampled_indices]
+        else:
+            top_songs = top_songs_pool
+    else:
+        # 传统方式：直接返回Top-N
+        top_songs = sorted_stats.head(topk)
+    
+    # 格式化结果
+    result = []
+    for _, row in top_songs.iterrows():
+        if chart_type == 'popularity':
+            result.append(f"{row['artist_name']} - {row['title']} (song_id={row['song']})，总播放量：{row['play_count']:.2f}")
+        elif chart_type == 'artist':
+            artist_hot = row['artist_hotttnesss'] if pd.notna(row['artist_hotttnesss']) else 0
+            result.append(f"{row['artist_name']} - {row['title']} (song_id={row['song']})，歌手热度：{artist_hot:.4f}")
+        else:
+            result.append(f"{row['artist_name']} - {row['title']} (song_id={row['song']})，总播放量：{row['play_count']:.2f}")
+    
     return result
 
-# 协同过滤 UserCF/ItemCF/SVD
-_df_cf = pd.read_csv(DATA_FILE, nrows=CF_SAMPLE_SIZE)
-_reader = Reader(rating_scale=(_df_cf['play_count'].min(), _df_cf['play_count'].max()))
-_data = Dataset.load_from_df(_df_cf[['user', 'song', 'play_count']], _reader)
-_trainset, _testset = train_test_split(_data, test_size=0.2, random_state=42)
+@st.cache_data
+def _get_cf_data():
+    # 缓存协同过滤数据，避免每次刷新重复读取CSV
+    return pd.read_csv(DATA_FILE, nrows=CF_SAMPLE_SIZE)
 
-# 预加载歌曲信息
-_song_info = _df_cf.drop_duplicates('song')[['song', 'title', 'artist_name']]
-_song_info_dict = _song_info.set_index('song').apply(lambda x: f"{x['artist_name']} - {x['title']}", axis=1).to_dict()
-
-# UserCF
-_sim_options_user = {'name': 'cosine', 'user_based': True}
-_algo_usercf = KNNBasic(sim_options=_sim_options_user)
-_algo_usercf.fit(_trainset)
 
 @st.cache_resource
-def get_usercf_model():
-    # 获取UserCF模型
-    model = KNNBasic(sim_options=_sim_options_user)
-    model.fit(_trainset)
-    return model
+def _get_cf_models():
+    # 懒加载并缓存协同过滤模型
+    df_cf = _get_cf_data()
+    reader = Reader(rating_scale=(df_cf['play_count'].min(), df_cf['play_count'].max()))
+    data = Dataset.load_from_df(df_cf[['user', 'song', 'play_count']], reader)
+    trainset, _ = train_test_split(data, test_size=0.2, random_state=42)
 
-def usercf_topn(topk):
-    # UserCF推荐TopN
-    model = get_usercf_model()
-    user_id = str(_df_cf['user'].iloc[0])
-    all_songs = _df_cf['song'].unique()
-    user_listened = _df_cf[_df_cf['user'] == int(user_id)]['song'].tolist()
+    algo_usercf = KNNBasic(sim_options={'name': 'cosine', 'user_based': True})
+    algo_usercf.fit(trainset)
+
+    algo_itemcf = KNNBasic(sim_options={'name': 'cosine', 'user_based': False})
+    algo_itemcf.fit(trainset)
+
+    algo_svd = SurpriseSVD()
+    algo_svd.fit(trainset)
+
+    song_info = df_cf.drop_duplicates('song')[['song', 'title', 'artist_name']]
+    song_info_dict = song_info.set_index('song').apply(
+        lambda x: f"{x['artist_name']} - {x['title']}", axis=1
+    ).to_dict()
+
+    return {
+        'df_cf': df_cf,
+        'usercf': algo_usercf,
+        'itemcf': algo_itemcf,
+        'svd': algo_svd,
+        'song_info_dict': song_info_dict,
+    }
+
+
+def _cf_predict_topn(algo_name, user_id, topk=10):
+    # 针对指定用户生成CF推荐
+    payload = _get_cf_models()
+    df_cf = payload['df_cf']
+    algo = payload[algo_name]
+    song_info_dict = payload['song_info_dict']
+
+    user_id = int(user_id)
+    all_songs = df_cf['song'].unique()
+    user_listened = set(df_cf[df_cf['user'] == user_id]['song'].tolist())
     to_predict = [song for song in all_songs if song not in user_listened]
+
+    # 控制候选集合，避免UI阻塞
+    candidate_limit = min(1000, len(to_predict))
     recommendations = []
-    for song in to_predict[:100]:
-        pred = model.predict(user_id, song)
+    for song in to_predict[:candidate_limit]:
+        pred = algo.predict(user_id, song)
         recommendations.append((song, pred.est))
+
     recommendations.sort(key=lambda x: x[1], reverse=True)
-    result = [f"{_song_info_dict.get(song, '未知')} (song_id={song})，预测分数={score:.4f}" for song, score in recommendations[:topk]]
-    return result
+    return [
+        f"{song_info_dict.get(song, '未知')} (song_id={song})，预测分数={score:.4f}"
+        for song, score in recommendations[:topk]
+    ]
 
-# ItemCF
-_sim_options_item = {'name': 'cosine', 'user_based': False}
-_algo_itemcf = KNNBasic(sim_options=_sim_options_item)
-_algo_itemcf.fit(_trainset)
 
-def itemcf_topn(topk=10):
-    # ItemCF推荐TopN
-    user_id = str(_df_cf['user'].iloc[0])
-    all_songs = _df_cf['song'].unique()
-    user_listened = _df_cf[_df_cf['user'] == int(user_id)]['song'].tolist()
-    to_predict = [song for song in all_songs if song not in user_listened]
-    recommendations = []
-    for song in to_predict[:100]:
-        pred = _algo_itemcf.predict(user_id, song)
-        recommendations.append((song, pred.est))
-    recommendations.sort(key=lambda x: x[1], reverse=True)
-    result = [f"{_song_info_dict.get(song, '未知')} (song_id={song})，预测分数={score:.4f}" for song, score in recommendations[:topk]]
-    return result
+def usercf_topn(user_id, topk=10):
+    return _cf_predict_topn('usercf', user_id, topk)
 
-# SVD
-_algo_svd = SurpriseSVD()
-_algo_svd.fit(_trainset)
 
-def svd_topn(topk=10):
-    # SVD推荐TopN
-    user_id = str(_df_cf['user'].iloc[0])
-    all_songs = _df_cf['song'].unique()
-    user_listened = _df_cf[_df_cf['user'] == int(user_id)]['song'].tolist()
-    to_predict = [song for song in all_songs if song not in user_listened]
-    recommendations = []
-    for song in to_predict[:100]:
-        pred = _algo_svd.predict(user_id, song)
-        recommendations.append((song, pred.est))
-    recommendations.sort(key=lambda x: x[1], reverse=True)
-    result = [f"{_song_info_dict.get(song, '未知')} (song_id={song})，预测分数={score:.4f}" for song, score in recommendations[:topk]]
-    return result
+def itemcf_topn(user_id, topk=10):
+    return _cf_predict_topn('itemcf', user_id, topk)
 
-# 深度学习推荐
-_ncf_df = pd.read_csv(DATA_FILE, nrows=NCF_SAMPLE_SIZE)
-_num_users = _ncf_df['user'].max() + 1
-_num_songs = _ncf_df['song'].max() + 1
-_ncf_model = NCF(_num_users, _num_songs)
-try:
-    _ncf_model.load_state_dict(torch.load(NCF_MODEL_PATH, map_location='cpu'))
-    _ncf_model.eval()
-except FileNotFoundError:
-    print(f"警告: 模型文件 {NCF_MODEL_PATH} 不存在，深度学习推荐功能将不可用")
-    _ncf_model = None
 
-_ncf_song_info = pd.read_csv(DATA_FILE, usecols=['song', 'artist_name', 'title']).drop_duplicates('song').set_index('song')
+def svd_topn(user_id, topk=10):
+    return _cf_predict_topn('svd', user_id, topk)
+
+
+@st.cache_resource
+def _get_ncf_runtime():
+    # 懒加载并缓存NCF模型和元数据
+    ncf_df = pd.read_csv(DATA_FILE, nrows=NCF_SAMPLE_SIZE)
+    num_users = ncf_df['user'].max() + 1
+    num_songs = ncf_df['song'].max() + 1
+    model = NCF(num_users, num_songs)
+    try:
+        model.load_state_dict(torch.load(NCF_MODEL_PATH, map_location='cpu'))
+        model.eval()
+    except FileNotFoundError:
+        model = None
+
+    ncf_song_info = pd.read_csv(
+        DATA_FILE, usecols=['song', 'artist_name', 'title']
+    ).drop_duplicates('song').set_index('song')
+
+    return {
+        'ncf_df': ncf_df,
+        'num_users': num_users,
+        'num_songs': num_songs,
+        'model': model,
+        'song_info': ncf_song_info,
+    }
 
 def train_personalized_ncf(user_id, user_history, topk=10, n_epochs=3):
     # 基于用户历史记录训练个性化NCF模型
@@ -137,6 +197,9 @@ def train_personalized_ncf(user_id, user_history, topk=10, n_epochs=3):
         from src.deep_learning_recommend import NCF, MusicDataset
         from torch.utils.data import DataLoader
         
+        ncf_payload = _get_ncf_runtime()
+        ncf_song_info = ncf_payload['song_info']
+
         # 准备训练数据
         df_global = pd.read_csv(DATA_FILE, nrows=NCF_SAMPLE_SIZE)
         df_global = df_global[['user', 'song', 'play_count']]
@@ -202,9 +265,9 @@ def train_personalized_ncf(user_id, user_history, topk=10, n_epochs=3):
         # 格式化结果
         result = []
         for sid, score in top_recommend:
-            if sid in _ncf_song_info.index:
-                artist = _ncf_song_info.loc[sid, 'artist_name']
-                title = _ncf_song_info.loc[sid, 'title']
+            if sid in ncf_song_info.index:
+                artist = ncf_song_info.loc[sid, 'artist_name']
+                title = ncf_song_info.loc[sid, 'title']
                 result.append(f"{artist} - {title} (song_id={sid})，预测分数={score:.4f}")
             else:
                 result.append(f"song_id={sid}，预测分数={score:.4f}")
@@ -221,26 +284,31 @@ def train_personalized_ncf(user_id, user_history, topk=10, n_epochs=3):
 
 def ncf_recommend(user_id, topk=10, user_history=None):
     # NCF深度学习推荐TopN
-    max_user_id = _num_users - 1
+    payload = _get_ncf_runtime()
+    num_users = payload['num_users']
+    num_songs = payload['num_songs']
+    ncf_model = payload['model']
+    ncf_song_info = payload['song_info']
+    max_user_id = num_users - 1
     
     # 如果用户ID超出范围且有历史记录，使用个性化训练
     if user_id > max_user_id and user_history:
         return train_personalized_ncf(user_id, user_history, topk)
     
     # 使用预训练模型
-    if _ncf_model is None:
+    if ncf_model is None:
         raise FileNotFoundError(f"模型文件 {NCF_MODEL_PATH} 不存在，请先训练模型")
     
-    user_tensor = torch.tensor([user_id]*_num_songs, dtype=torch.long)
-    song_tensor = torch.arange(_num_songs, dtype=torch.long)
+    user_tensor = torch.tensor([user_id] * num_songs, dtype=torch.long)
+    song_tensor = torch.arange(num_songs, dtype=torch.long)
     with torch.no_grad():
-        scores = _ncf_model(user_tensor, song_tensor).numpy()
+        scores = ncf_model(user_tensor, song_tensor).numpy()
     top_idx = scores.argsort()[::-1][:topk]
     result = []
     for sid in top_idx:
-        if sid in _ncf_song_info.index:
-            artist = _ncf_song_info.loc[sid, 'artist_name']
-            title = _ncf_song_info.loc[sid, 'title']
+        if sid in ncf_song_info.index:
+            artist = ncf_song_info.loc[sid, 'artist_name']
+            title = ncf_song_info.loc[sid, 'title']
             result.append(f"{artist} - {title} (song_id={sid})，预测分数={scores[sid]:.4f}")
         else:
             result.append(f"song_id={sid}，预测分数={scores[sid]:.4f}")
@@ -268,8 +336,8 @@ def _get_feature_encoder():
     
     # 训练编码器
     artist_list = [[name] for name in artist_names]
-    artist_features = artist_hasher.transform(artist_list).toarray()
-    num_features_scaled = scaler.fit_transform(num_features)
+    artist_hasher.transform(artist_list)
+    scaler.fit_transform(num_features)
     
     return artist_hasher, scaler, songs
 
@@ -351,8 +419,7 @@ def extract_song_id_from_result(result_str):
 def get_max_user_id_for_hybrid():
     # 获取数据中的最大用户ID
     try:
-        df = pd.read_csv(DATA_FILE, usecols=['user'], nrows=NCF_SAMPLE_SIZE)
-        return int(df['user'].max())
+        return int(_get_ncf_runtime()['num_users'] - 1)
     except:
         return 1000
 
@@ -385,7 +452,7 @@ def hybrid_recommend(user_id, user_history, topk=10, weights=None):
     
     # 协同过滤推荐
     try:
-        cf_results = svd_topn(topk * 2)
+        cf_results = svd_topn(user_id, topk * 2)
         for result_str in cf_results:
             song_id = extract_song_id_from_result(result_str)
             if song_id:
@@ -479,5 +546,3 @@ def hybrid_recommend(user_id, user_history, topk=10, weights=None):
         result.append(f"{song_name} (song_id={song_id})，融合分数={score:.4f}")
     
     return result
-
-

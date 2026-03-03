@@ -8,6 +8,10 @@ from config import MIN_RECOMMEND, MAX_RECOMMEND, DEFAULT_RECOMMEND
 def render():
     # 渲染协同过滤推荐页面
     st.title("排行榜 - 协同过滤推荐")
+    user_id = st.session_state.get('user_id', None)
+    if user_id is None:
+        st.warning("⚠️ 请先登录")
+        return
     
     # 选择算法
     model_type = st.radio(
@@ -29,11 +33,11 @@ def render():
     try:
         with st.spinner(f"正在使用{model_type}算法生成推荐..."):
             if model_type == "UserCF":
-                result = usercf_topn(topk)
+                result = usercf_topn(user_id, topk)
             elif model_type == "ItemCF":
-                result = itemcf_topn(topk)
+                result = itemcf_topn(user_id, topk)
             else:
-                result = svd_topn(topk)
+                result = svd_topn(user_id, topk)
         
         st.write(f"**{model_type} 推荐Top{topk}：**")
         render_recommendation_results(result, prefix='cf', show_listen_button=True)

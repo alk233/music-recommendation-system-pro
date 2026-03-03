@@ -2,9 +2,35 @@
 import os
 import json
 import requests
+import base64
+import hashlib
+import hmac
 import pandas as pd
 import streamlit as st
 from config import FONT_PATH, FONT_URL, DATA_FILE, HISTORY_FILE, MAX_HISTORY_SIZE, NCF_SAMPLE_SIZE, USERS_FILE
+
+
+def _hash_password(password, salt_bytes=None):
+    # 使用PBKDF2-HMAC-SHA256做密码哈希
+    if salt_bytes is None:
+        salt_bytes = os.urandom(16)
+    hashed = hashlib.pbkdf2_hmac(
+        'sha256', password.encode('utf-8'), salt_bytes, 120000
+    )
+    return (
+        base64.b64encode(hashed).decode('utf-8'),
+        base64.b64encode(salt_bytes).decode('utf-8')
+    )
+
+
+def _verify_password(password, password_hash, salt_b64):
+    # 校验密码哈希
+    try:
+        salt_bytes = base64.b64decode(salt_b64.encode('utf-8'))
+        computed_hash, _ = _hash_password(password, salt_bytes=salt_bytes)
+        return hmac.compare_digest(computed_hash, password_hash)
+    except Exception:
+        return False
 
 
 def download_font_if_needed():
@@ -182,9 +208,12 @@ def register_user(username, password):
     
     # 保存用户信息
     from datetime import datetime
+    password_hash, password_salt = _hash_password(password)
+
     users[username] = {
         'user_id': new_user_id,
-        'password': password,
+        'password_hash': password_hash,
+        'password_salt': password_salt,
         'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
     
@@ -205,8 +234,21 @@ def verify_user(username, password):
         return False, None, "用户名不存在"
     
     user_data = users[username]
-    if user_data.get('password') != password:
-        return False, None, "密码错误"
+    # 新版：哈希密码验证
+    stored_hash = user_data.get('password_hash')
+    stored_salt = user_data.get('password_salt')
+    if stored_hash and stored_salt:
+        if not _verify_password(password, stored_hash, stored_salt):
+            return False, None, "密码错误"
+    else:
+        # 兼容旧版明文存储，首次登录后自动迁移
+        if user_data.get('password') != password:
+            return False, None, "密码错误"
+        new_hash, new_salt = _hash_password(password)
+        user_data['password_hash'] = new_hash
+        user_data['password_salt'] = new_salt
+        user_data.pop('password', None)
+        save_users(users)
     
     user_id = user_data.get('user_id')
     return True, user_id, "登录成功"

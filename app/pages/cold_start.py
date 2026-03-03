@@ -2,7 +2,7 @@
 import streamlit as st
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
-from src.recommend_utils import content_cold_start
+from src.recommend_utils import popularity_cold_start
 from app.utils.ui_components import render_recommendation_results
 from app.utils.helpers import download_font_if_needed
 from config import DATA_FILE
@@ -76,7 +76,19 @@ def get_top_stats():
 
 def render():
     # 渲染冷启动推荐页面
-    st.title("首页 - 内容推荐冷启动")
+    st.title("首页 - 多维度榜单推荐（新用户）")
+    
+    # 榜单类型选择
+    chart_type = st.selectbox(
+        "选择榜单类型",
+        options=['popularity', 'artist'],
+        format_func=lambda x: {
+            'popularity': '🔥 热门度榜单（按总播放量）',
+            'artist': '🎤 歌手榜单（按歌手热度）'
+        }[x],
+        index=0,
+        key='chart_type_selector'
+    )
     
     # 推荐数量选择
     topk = st.slider(
@@ -88,20 +100,40 @@ def render():
     )
     
     # 初始化推荐结果
-    if 'cold_start_result' not in st.session_state or st.session_state.get('cold_start_topk', 10) != topk:
-        st.session_state['cold_start_result'] = content_cold_start(topk)
+    chart_type_key = f'cold_start_result_{chart_type}'
+    if (chart_type_key not in st.session_state or 
+        st.session_state.get('cold_start_topk', 10) != topk or
+        st.session_state.get('cold_start_chart_type') != chart_type):
+        # 使用时间戳作为随机种子，确保每次刷新都不同
+        import time
+        seed = int(time.time() * 1000) % 1000000
+        st.session_state[chart_type_key] = popularity_cold_start(topk, chart_type=chart_type, diversity=True, seed=seed)
         st.session_state['cold_start_topk'] = topk
+        st.session_state['cold_start_seed'] = seed
+        st.session_state['cold_start_chart_type'] = chart_type
     
     # 刷新按钮
-    if st.button("刷新冷启动推荐"):
-        st.session_state['cold_start_result'] = content_cold_start(topk)
+    if st.button("刷新当前榜单"):
+        # 使用新的随机种子，确保推荐结果不同
+        import time
+        import random
+        seed = random.randint(0, 1000000)
+        st.session_state[chart_type_key] = popularity_cold_start(topk, chart_type=chart_type, diversity=True, seed=seed)
         st.session_state['cold_start_topk'] = topk
-        st.success("推荐已刷新！")
+        st.session_state['cold_start_seed'] = seed
+        st.session_state['cold_start_chart_type'] = chart_type
+        st.success("榜单已刷新！")
         st.rerun()
     
     # 显示推荐结果
-    result = st.session_state['cold_start_result']
-    st.write("**为新用户推荐的歌曲：**")
+    result = st.session_state.get(chart_type_key, [])
+    
+    # 显示榜单标题
+    chart_titles = {
+        'popularity': '🔥 热门度榜单 - 总播放量最高的歌曲',
+        'artist': '🎤 歌手榜单 - 歌手热度最高的歌曲'
+    }
+    st.write(f"**{chart_titles.get(chart_type, '推荐歌曲')}：**")
     
     # 显示推荐结果
     render_recommendation_results(result, prefix='cold', show_listen_button=True)

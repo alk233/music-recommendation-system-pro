@@ -72,25 +72,43 @@ def render():
                 # 使用预训练模型
                 with st.spinner(f"正在使用NCF模型为用户ID {username} 生成推荐..."):
                     result = ncf_recommend(user_id, topk, user_history)
+                mode = "pretrained"
             else:
                 # 使用个性化训练
                 if user_history:
                     with st.spinner(f"正在基于你的历史记录进行个性化训练（{len(user_history)}条历史）..."):
                         result = ncf_recommend(user_id, topk, user_history)
-                    st.success("个性化训练完成！")
+                    mode = "personalized"
                 else:
                     st.warning("请先积累一些历史记录（听一些歌曲）")
                     result = []
+                    mode = "personalized"
             
-            if result:
-                st.write("**为你推荐的歌曲：**")
-                render_recommendation_results(result, prefix='ncf', show_listen_button=True)
-            else:
-                st.warning("未找到推荐结果，请尝试积累更多历史记录")
+            st.session_state['ncf_recommend_result'] = result
+            st.session_state['ncf_recommend_meta'] = {
+                'user_id': user_id,
+                'topk': topk,
+                'mode': mode
+            }
+            if mode == "personalized" and result:
+                st.success("个性化训练完成！")
                 
         except FileNotFoundError:
-            st.error("模型文件不存在，请确保ncf_model.pth文件在项目根目录")
+            st.error("模型文件不存在，请先训练模型并确保文件在 model/ncf_model.pth")
         except Exception as e:
             st.error(f"推荐生成失败: {str(e)}")
             import traceback
             st.code(traceback.format_exc())
+
+    # 显示推荐结果（重跑后也保留）
+    meta = st.session_state.get('ncf_recommend_meta', {})
+    if (
+        'ncf_recommend_result' in st.session_state
+        and meta.get('user_id') == user_id
+    ):
+        result = st.session_state['ncf_recommend_result']
+        if result:
+            st.write("**为你推荐的歌曲：**")
+            render_recommendation_results(result, prefix='ncf', show_listen_button=True)
+        else:
+            st.warning("未找到推荐结果，请尝试积累更多历史记录")

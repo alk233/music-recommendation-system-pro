@@ -50,7 +50,7 @@ if 'username' in st.session_state and st.session_state['username']:
 
 page = st.sidebar.radio(
     "导航",
-    ["首页（内容冷启动）", "排行榜（协同过滤）", "深度学习推荐", "内容推荐", "融合推荐", "必吃榜"]
+    ["首页（热门推荐）", "排行榜（协同过滤）", "深度学习推荐", "内容推荐", "融合推荐", "必吃榜"]
 )
 
 # 渲染侧边栏历史记录
@@ -62,7 +62,7 @@ if not render_user_login():
 
 # 根据选择渲染对应页面
 try:
-    if page == "首页（内容冷启动）":
+    if page == "首页（热门推荐）":
         cold_start.render()
     elif page == "排行榜（协同过滤）":
         collaborative.render()

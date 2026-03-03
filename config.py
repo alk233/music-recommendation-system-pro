@@ -26,7 +26,7 @@ SONG_MIN_PLAYS = 50  # 歌曲最小播放量
 
 # 模型文件路径
 MODEL_DIR = os.path.join(BASE_DIR, 'model')
-NCF_MODEL_PATH = os.path.join(BASE_DIR, 'ncf_model.pth')
+NCF_MODEL_PATH = os.path.join(MODEL_DIR, 'ncf_model.pth')
 
 # 字体文件路径
 FONT_PATH = os.path.join(BASE_DIR, 'simhei.ttf')

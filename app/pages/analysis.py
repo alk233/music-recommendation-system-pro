@@ -7,6 +7,20 @@ from app.utils.helpers import load_song_info
 from config import DATA_FILE
 
 
+@st.cache_data
+def _load_analysis_data():
+    # 一次性加载分析页需要的字段并建立索引，减少重复IO和循环过滤
+    df = pd.read_csv(
+        DATA_FILE,
+        usecols=[
+            'song', 'artist_name', 'title', 'play_count',
+            'year', 'artist_familiarity', 'artist_hotttnesss'
+        ]
+    )
+    df_song_index = df.drop_duplicates('song').set_index('song')
+    return df, df_song_index
+
+
 def render():
     # 渲染推荐分析页面
     st.title("📊 必吃榜 - 推荐分析")
@@ -55,12 +69,12 @@ def render():
                 # 年份分布
                 st.markdown("### 你喜欢的音乐年份分布")
                 try:
-                    df_full = pd.read_csv(DATA_FILE, usecols=['song', 'year'])
-                    user_years = []
-                    for song_id in user_history:
-                        song_data = df_full[df_full['song'] == song_id]
-                        if not song_data.empty and pd.notna(song_data['year'].iloc[0]):
-                            user_years.append(int(song_data['year'].iloc[0]))
+                    _, df_song_index = _load_analysis_data()
+                    user_years_series = pd.to_numeric(
+                        df_song_index.reindex(user_history)['year'],
+                        errors='coerce'
+                    ).dropna().astype(int)
+                    user_years = user_years_series.tolist()
                     
                     if user_years:
                         year_counts = pd.Series(user_years).value_counts().sort_index()
@@ -89,15 +103,17 @@ def render():
                     
                     plt.rcParams['axes.unicode_minus'] = False
                     
-                    df_full = pd.read_csv(DATA_FILE, usecols=['song', 'artist_familiarity', 'artist_hotttnesss'])
-                    user_features = []
-                    for song_id in user_history:
-                        song_data = df_full[df_full['song'] == song_id]
-                        if not song_data.empty:
-                            user_features.append({
-                                'familiarity': song_data['artist_familiarity'].iloc[0] if pd.notna(song_data['artist_familiarity'].iloc[0]) else 0,
-                                'hotttnesss': song_data['artist_hotttnesss'].iloc[0] if pd.notna(song_data['artist_hotttnesss'].iloc[0]) else 0
-                            })
+                    _, df_song_index = _load_analysis_data()
+                    user_feature_df = df_song_index.reindex(user_history)[
+                        ['artist_familiarity', 'artist_hotttnesss']
+                    ].copy()
+                    user_feature_df = user_feature_df.fillna(0)
+                    user_features = user_feature_df.rename(
+                        columns={
+                            'artist_familiarity': 'familiarity',
+                            'artist_hotttnesss': 'hotttnesss'
+                        }
+                    ).to_dict('records')
                     
                     if user_features:
                         features_df = pd.DataFrame(user_features)
@@ -138,7 +154,7 @@ def render():
     st.markdown("## 🔥 热门内容排行")
     
     try:
-        df = pd.read_csv(DATA_FILE, usecols=['song', 'artist_name', 'title', 'play_count'])
+        df, _ = _load_analysis_data()
         
         # 最受欢迎的歌手
         st.markdown("### 最受欢迎的歌手（Top 10）")
