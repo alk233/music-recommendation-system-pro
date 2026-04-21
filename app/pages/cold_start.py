@@ -1,11 +1,13 @@
 # 冷启动推荐页面
 import streamlit as st
 import matplotlib.pyplot as plt
+import numpy as np
 from wordcloud import WordCloud
 from src.recommend_utils import popularity_cold_start
 from app.utils.ui_components import render_recommendation_results
 from app.utils.helpers import download_font_if_needed
-from config import DATA_FILE
+from app.utils.data_notes import render_page_metric_note
+from config import DATA_FILE, STREAMLIT_DATA_NROWS
 
 
 @st.cache_resource
@@ -17,7 +19,9 @@ def get_wordcloud_figs():
     
     try:
         import pandas as pd
-        df = pd.read_csv(DATA_FILE, usecols=['artist_name', 'title'])
+        df = pd.read_csv(
+            DATA_FILE, usecols=['artist_name', 'title'], nrows=STREAMLIT_DATA_NROWS
+        )
         artist_counts = df['artist_name'].value_counts().head(20)
         song_counts = df['title'].value_counts().head(20)
         
@@ -65,7 +69,9 @@ def get_top_stats():
     # 获取Top统计数据
     import pandas as pd
     try:
-        df = pd.read_csv(DATA_FILE, usecols=['artist_name', 'title'])
+        df = pd.read_csv(
+            DATA_FILE, usecols=['artist_name', 'title'], nrows=STREAMLIT_DATA_NROWS
+        )
         artist_counts = df['artist_name'].value_counts().head(10)
         song_counts = df['title'].value_counts().head(10)
         return artist_counts, song_counts
@@ -74,23 +80,131 @@ def get_top_stats():
         return None, None
 
 
+@st.cache_data
+def get_artist_hot_table():
+    # 歌手热度表：按歌手聚合，供“歌手热门度榜单”使用
+    import pandas as pd
+
+    df = pd.read_csv(
+        DATA_FILE,
+        usecols=["artist_name", "artist_hotttnesss", "play_count"],
+        nrows=STREAMLIT_DATA_NROWS,
+    )
+    g = (
+        df.groupby("artist_name", as_index=False)
+        .agg(
+            artist_hotttnesss=("artist_hotttnesss", "mean"),
+            play_sum=("play_count", "sum"),
+        )
+        .fillna(0)
+    )
+    g = g.sort_values(["artist_hotttnesss", "play_sum"], ascending=[False, False])
+    return g
+
+
+def get_artist_hot_rankings(topk=10, seed=None):
+    # 从候选Top100歌手中随机抽样topk，保证刷新有变化
+    table = get_artist_hot_table()
+    if table.empty:
+        return []
+    candidate_n = min(100, len(table))
+    candidates = table.head(candidate_n).copy()
+    if len(candidates) <= topk:
+        picked = candidates
+    else:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(len(candidates), size=topk, replace=False)
+        picked = candidates.iloc[idx]
+    picked = picked.sort_values(["artist_hotttnesss", "play_sum"], ascending=[False, False])
+    out = []
+    for _, r in picked.iterrows():
+        out.append(
+            f"{r['artist_name']}，歌手热度 {_format_hot(r['artist_hotttnesss'])}，热度合计 {_format_hot(r['play_sum'])}"
+        )
+    return out
+
+
+@st.cache_data
+def get_artist_song_top10_strict(topk=10):
+    # 原先风格：按歌手热度的歌曲榜单（严格TopN，不随机）
+    import pandas as pd
+
+    df = pd.read_csv(
+        DATA_FILE,
+        usecols=["song", "artist_name", "title", "artist_hotttnesss", "play_count"],
+        nrows=STREAMLIT_DATA_NROWS,
+    )
+    # 按歌曲去重后，依据歌手热度+热度合计排序
+    g = (
+        df.groupby(["song", "artist_name", "title"], as_index=False)
+        .agg(artist_hotttnesss=("artist_hotttnesss", "mean"), play_sum=("play_count", "sum"))
+        .fillna(0)
+        .sort_values(["artist_hotttnesss", "play_sum"], ascending=[False, False])
+    )
+    g = g.head(topk)
+    out = []
+    for _, r in g.iterrows():
+        out.append(
+            f"{r['artist_name']} - {r['title']} (song_id={int(r['song'])})，歌手热度 {_format_hot(r['artist_hotttnesss'])}"
+        )
+    return out
+
+
+def get_artist_song_rankings_refreshable(topk=10, seed=None):
+    # 可刷新版本：从歌手热曲候选 Top100 中随机抽样 topk
+    import pandas as pd
+
+    df = pd.read_csv(
+        DATA_FILE,
+        usecols=["song", "artist_name", "title", "artist_hotttnesss", "play_count"],
+        nrows=STREAMLIT_DATA_NROWS,
+    )
+    g = (
+        df.groupby(["song", "artist_name", "title"], as_index=False)
+        .agg(artist_hotttnesss=("artist_hotttnesss", "mean"), play_sum=("play_count", "sum"))
+        .fillna(0)
+        .sort_values(["artist_hotttnesss", "play_sum"], ascending=[False, False])
+    )
+    candidates = g.head(min(100, len(g)))
+    if len(candidates) <= topk:
+        picked = candidates
+    else:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(len(candidates), size=topk, replace=False)
+        picked = candidates.iloc[idx]
+    picked = picked.sort_values(["artist_hotttnesss", "play_sum"], ascending=[False, False])
+    out = []
+    for _, r in picked.iterrows():
+        out.append(
+            f"{r['artist_name']} - {r['title']} (song_id={int(r['song'])})，歌手热度 {_format_hot(r['artist_hotttnesss'])}"
+        )
+    return out
+
+
+@st.cache_data
+def get_artist_top20_hot():
+    # 歌手热度 Top20（仅歌手）
+    tab = get_artist_hot_table()
+    top = tab.head(20)
+    lines = []
+    for _, r in top.iterrows():
+        lines.append(f"{r['artist_name']}，歌手热度 {_format_hot(r['artist_hotttnesss'])}，热度合计 {_format_hot(r['play_sum'])}")
+    return lines
+
+
+def _format_hot(x):
+    try:
+        return f"{float(x):.4f}"
+    except Exception:
+        return "0.0000"
+
+
 def render():
     # 渲染冷启动推荐页面
     st.title("首页 - 多维度榜单推荐（新用户）")
-    
-    # 榜单类型选择
-    chart_type = st.selectbox(
-        "选择榜单类型",
-        options=['popularity', 'artist'],
-        format_func=lambda x: {
-            'popularity': '🔥 热门度榜单（按总播放量）',
-            'artist': '🎤 歌手榜单（按歌手热度）'
-        }[x],
-        index=0,
-        key='chart_type_selector'
-    )
-    
-    # 推荐数量选择
+    render_page_metric_note("home")
+
+    st.markdown("### 榜单设置")
     topk = st.slider(
         "推荐TopN",
         min_value=1,
@@ -98,45 +212,85 @@ def render():
         value=10,
         step=1
     )
-    
-    # 初始化推荐结果
-    chart_type_key = f'cold_start_result_{chart_type}'
-    if (chart_type_key not in st.session_state or 
-        st.session_state.get('cold_start_topk', 10) != topk or
-        st.session_state.get('cold_start_chart_type') != chart_type):
-        # 使用时间戳作为随机种子，确保每次刷新都不同
-        import time
-        seed = int(time.time() * 1000) % 1000000
-        st.session_state[chart_type_key] = popularity_cold_start(topk, chart_type=chart_type, diversity=True, seed=seed)
-        st.session_state['cold_start_topk'] = topk
-        st.session_state['cold_start_seed'] = seed
-        st.session_state['cold_start_chart_type'] = chart_type
-    
-    # 刷新按钮
-    if st.button("刷新当前榜单"):
-        # 使用新的随机种子，确保推荐结果不同
-        import time
+
+    def _ensure_chart(chart_type: str):
+        key = f"cold_start_result_{chart_type}"
+        topk_key = f"cold_start_topk_{chart_type}"
+        if key not in st.session_state or st.session_state.get(topk_key) != topk:
+            import random
+
+            seed = random.randint(0, 1000000)
+            st.session_state[key] = popularity_cold_start(
+                topk, chart_type=chart_type, diversity=True, seed=seed
+            )
+            st.session_state[topk_key] = topk
+            st.session_state[f"cold_start_seed_{chart_type}"] = seed
+
+    def _refresh_chart(chart_type: str):
         import random
+
         seed = random.randint(0, 1000000)
-        st.session_state[chart_type_key] = popularity_cold_start(topk, chart_type=chart_type, diversity=True, seed=seed)
-        st.session_state['cold_start_topk'] = topk
-        st.session_state['cold_start_seed'] = seed
-        st.session_state['cold_start_chart_type'] = chart_type
-        st.success("榜单已刷新！")
-        st.rerun()
-    
-    # 显示推荐结果
-    result = st.session_state.get(chart_type_key, [])
-    
-    # 显示榜单标题
-    chart_titles = {
-        'popularity': '🔥 热门度榜单 - 总播放量最高的歌曲',
-        'artist': '🎤 歌手榜单 - 歌手热度最高的歌曲'
-    }
-    st.write(f"**{chart_titles.get(chart_type, '推荐歌曲')}：**")
-    
-    # 显示推荐结果
-    render_recommendation_results(result, prefix='cold', show_listen_button=True)
+        st.session_state[f"cold_start_result_{chart_type}"] = popularity_cold_start(
+            topk, chart_type=chart_type, diversity=True, seed=seed
+        )
+        st.session_state[f"cold_start_topk_{chart_type}"] = topk
+        st.session_state[f"cold_start_seed_{chart_type}"] = seed
+
+    _ensure_chart("popularity")
+
+    st.write("---")
+    left, right = st.columns(2)
+
+    with left:
+        st.markdown("### 🔥 热门度榜单")
+        st.caption("按热度合计排序，展示全局最热门歌曲。")
+        if st.button("刷新热门度榜单", key="refresh_popularity", use_container_width=True):
+            _refresh_chart("popularity")
+            st.rerun()
+        render_recommendation_results(
+            st.session_state.get("cold_start_result_popularity", []),
+            prefix='cold_popularity',
+            show_listen_button=True
+        )
+
+    with right:
+        st.markdown("### 🎤 歌手热门度榜单")
+        st.caption("从 Top100 候选中抽样，展示歌手热曲榜。")
+        st.markdown("#### 歌手热曲榜")
+        if ("cold_start_result_artist_song_refresh" not in st.session_state
+            or st.session_state.get("cold_start_topk_artist_song_refresh") != topk):
+            import random
+            seed = random.randint(0, 1000000)
+            st.session_state["cold_start_result_artist_song_refresh"] = get_artist_song_rankings_refreshable(topk=topk, seed=seed)
+            st.session_state["cold_start_topk_artist_song_refresh"] = topk
+            st.session_state["cold_start_seed_artist_song_refresh"] = seed
+        if st.button("刷新歌手热曲榜", key="refresh_artist_song", use_container_width=True):
+            import random
+            seed = random.randint(0, 1000000)
+            st.session_state["cold_start_result_artist_song_refresh"] = get_artist_song_rankings_refreshable(topk=topk, seed=seed)
+            st.session_state["cold_start_topk_artist_song_refresh"] = topk
+            st.session_state["cold_start_seed_artist_song_refresh"] = seed
+            st.rerun()
+        strict_lines = st.session_state.get("cold_start_result_artist_song_refresh", [])
+        render_recommendation_results(
+            strict_lines,
+            prefix='cold_artist_refreshable',
+            show_listen_button=True
+        )
+
+    # 全宽展示歌手热度榜单，避免右下角堆叠、左下角空白
+    st.write("---")
+    st.markdown("### 🎙️ 歌手热度Top20（仅歌手）")
+    artist_lines = get_artist_top20_hot()
+    left_list = artist_lines[:10]
+    right_list = artist_lines[10:20]
+    c_left, c_right = st.columns(2)
+    with c_left:
+        for i, line in enumerate(left_list, 1):
+            st.write(f"{i}. {line}")
+    with c_right:
+        for i, line in enumerate(right_list, 11):
+            st.write(f"{i}. {line}")
     
     # 词云和统计可视化
     st.write("---")
@@ -144,14 +298,29 @@ def render():
     
     fig1, fig2 = get_wordcloud_figs()
     if fig1 and fig2:
-        # 单独居中显示标题
-        st.markdown("<h3 style='text-align: center;'>最受欢迎的歌手词云</h3>", unsafe_allow_html=True)
-        # 不使用容器宽度，保持图像较小
-        st.pyplot(fig1, use_container_width=False)
-        
-        # 单独居中显示标题
-        st.markdown("<h3 style='text-align: center;'>最受欢迎的歌曲词云</h3>", unsafe_allow_html=True)
-        st.pyplot(fig2, use_container_width=False)
+        wc_left, wc_right = st.columns(2)
+        with wc_left:
+            st.markdown(
+                """
+                <div style="padding:10px 12px;border:1px solid #e8e8e8;border-radius:10px;background:#fafafa;">
+                  <h4 style="margin:0 0 6px 0;">🎤 最受欢迎歌手词云</h4>
+                  <p style="margin:0 0 8px 0;color:#666;font-size:13px;">词频越高，字体越大。</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.pyplot(fig1, use_container_width=True)
+        with wc_right:
+            st.markdown(
+                """
+                <div style="padding:10px 12px;border:1px solid #e8e8e8;border-radius:10px;background:#fafafa;">
+                  <h4 style="margin:0 0 6px 0;">🎵 最受欢迎歌曲词云</h4>
+                  <p style="margin:0 0 8px 0;color:#666;font-size:13px;">词频越高，字体越大。</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.pyplot(fig2, use_container_width=True)
     else:
         st.warning("词云图生成失败，请检查数据文件")
 

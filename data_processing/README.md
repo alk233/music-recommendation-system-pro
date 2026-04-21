@@ -25,7 +25,7 @@
 - **输出**：`final_merged_encoded.csv`
 
 ### 5. usernorm_rating.py
-- **功能**：对播放量进行用户归一化处理
+- **功能**：用户内 r=播放/用户最大播放 → **ln(2+r)** 平滑 → 全表 **QuantileTransformer** 映射到近似均匀 **[0,1]**，写入列 `play_count`
 - **输入**：`final_merged_encoded.csv`
 - **输出**：`final_merged_encoded_usernorm.csv`（最终数据文件）
 

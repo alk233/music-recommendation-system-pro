@@ -1,10 +1,11 @@
-# 推荐分析页面
+# 个人中心：用户画像 + 热门内容
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from app.utils.helpers import load_song_info
-from config import DATA_FILE
+from app.utils.data_notes import render_page_metric_note
+from config import DATA_FILE, STREAMLIT_DATA_NROWS
 
 
 @st.cache_data
@@ -15,15 +16,17 @@ def _load_analysis_data():
         usecols=[
             'song', 'artist_name', 'title', 'play_count',
             'year', 'artist_familiarity', 'artist_hotttnesss'
-        ]
+        ],
+        nrows=STREAMLIT_DATA_NROWS,
     )
     df_song_index = df.drop_duplicates('song').set_index('song')
     return df, df_song_index
 
 
 def render():
-    # 渲染推荐分析页面
-    st.title("📊 必吃榜 - 推荐分析")
+    # 渲染个人中心页面
+    st.title("个人中心")
+    st.caption("用户画像与全站热门")
     
     # 获取当前用户信息
     username = st.session_state.get('username', '')
@@ -32,8 +35,8 @@ def render():
     if not username:
         st.warning("⚠️ 请先登录")
         return
-    
-    # 分析页面说明
+
+    render_page_metric_note("analysis")
     
     st.write("---")
     
@@ -151,7 +154,10 @@ def render():
     st.write("---")
     
     # 2. 热门内容排行
-    st.markdown("## 🔥 热门内容排行")
+    st.markdown("## 热门内容排行")
+    st.caption(
+        "下图纵轴为样本内各歌手或各单曲的偏好标签 z 合计，越大表示在所用样本中相对越热门。"
+    )
     
     try:
         df, _ = _load_analysis_data()
@@ -165,7 +171,7 @@ def render():
         with col2:
             st.write("**排行榜：**")
             for idx, (artist, count) in enumerate(artist_stats.items(), 1):
-                st.write(f"{idx}. {artist} (播放量: {int(count):,})")
+                st.write(f"{idx}. {artist}　热度合计 {float(count):.2f}")
         
         # 最受欢迎的歌曲
         st.markdown("### 最受欢迎的歌曲（Top 10）")
@@ -179,7 +185,9 @@ def render():
         with col2:
             st.write("**排行榜：**")
             for idx, row in song_stats.iterrows():
-                st.write(f"{song_stats.index.get_loc(idx)+1}. {row['song_name']} (播放量: {int(row['play_count']):,})")
+                st.write(
+                    f"{song_stats.index.get_loc(idx)+1}. {row['song_name']}　热度合计 {float(row['play_count']):.2f}"
+                )
         
     except Exception as e:
         st.error(f"加载热门内容失败: {str(e)}")

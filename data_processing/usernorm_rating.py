@@ -1,10 +1,11 @@
 """
-对播放量进行用户归一化处理
+对播放量进行用户归一化：先 ln(2+r)，再对全表做分位数映射到近似均匀 [0,1]。
 """
 import sys
 import os
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import QuantileTransformer
 
 # 添加项目根目录到路径
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -15,7 +16,7 @@ from config import FINAL_MERGED_ENCODED, DATA_FILE
 
 
 def usernorm_rating():
-    """对播放量进行用户归一化处理"""
+    """用户内归一化 r → ln(2+r) → 全局 QuantileTransformer 映射到近似 Uniform(0,1)。"""
     print('正在读取final_merged_encoded.csv...')
     df = pd.read_csv(FINAL_MERGED_ENCODED)
     print(f'读取到 {len(df)} 条记录')
@@ -28,14 +29,17 @@ def usernorm_rating():
     print('正在计算归一化比值...')
     r = df['play_count'] / user_max
     
-    # 评分（使用对数变换）
-    print('正在计算归一化评分...')
-    df['rating'] = np.log(2 + r)
+    # 对数平滑
+    print('正在计算 ln(2+r)...')
+    y = np.log(2 + r).to_numpy(dtype=np.float64).reshape(-1, 1)
     
-    # 用归一化评分替换play_count
+    # 全表分位数映射：单调拉伸，近似填满 [0,1]
+    print('正在进行全局分位数映射（QuantileTransformer → uniform）...')
+    qt = QuantileTransformer(output_distribution='uniform', random_state=0)
+    z = qt.fit_transform(y).ravel()
+    
     final = df.copy()
-    final['play_count'] = final['rating']
-    final = final.drop(columns=['rating'])
+    final['play_count'] = z
     
     # 保存新数据
     final.to_csv(DATA_FILE, index=False)
